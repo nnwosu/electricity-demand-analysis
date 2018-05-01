@@ -7,15 +7,16 @@ import itertools
 from KitoboDatabase import KitoboDatabase
 
 
-maxIter = 10000 #absolute max number of samples
-tol= 0.00001 #tolerance for relative standard deviation convergence
+maxIter = 1000 #absolute max number of samples
+tol= 0.001 #tolerance for autocorrelation convergence
 
-startK = 7;
+startK = 1
+n = 1 #order of autocorrelation
 
 #Open connection
 db = KitoboDatabase()
 db.connect()
-db.setupLoadAggregationCalculations()
+db.setupLoadAggregationCalculations(samplingInterval='day')
 N = db.getNumberUsers()
 
 for k in range(startK,N+1):
@@ -36,17 +37,14 @@ for k in range(startK,N+1):
         else:
             ind = sampleList[numIter]
         try:
-            db.calculateAggregateLoadStats(ind,sampleIndex=numIter) #Calculates (and saves) statistics of the aggregated load
+            db.calculateAutocorrelation(ind,n,sampleIndex=numIter) #Calculates (and saves) statistics of the aggregated load
         except IndexError:
             db.removeSample(k,ind)
             sampleList = db.getSampleList(k)
             print('Invalid ind: ' + str(ind))
             continue
 
-        #loadFactorStats = db.calculateLoadFactorStats(k,numIter) #Calculates (and saves) statistics of the load factor from the samples realized
-        #insert check to break if stdev is stable
-
-        newStdDev = db.calculateMetricStdDev(k,numIter,'loadFactor')
+        newStdDev = db.calculateMetricStdDev(k,numIter,('autocorrelation_{0}').format(1))
 
         if prevStdDev > 0:
             t = abs(newStdDev-prevStdDev)/prevStdDev

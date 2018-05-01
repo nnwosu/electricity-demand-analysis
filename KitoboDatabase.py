@@ -1,11 +1,13 @@
 import configparser
 from datetime import datetime
+import numpy as np
+import pymongo
 from pymongo.database import Database
 from pymongo import MongoClient
 from statistics import stdev
 
-timeInterval = 'fiveMinutes'
-outCollectionName = 'aggregateLoadStats' + timeInterval.capitalize()
+defaultSamplingInterval = 'fiveMinutes'
+outCollectionPrefix = 'aggregateLoadStats'
 loadFactorCollectionName = 'loadFactorSamples'
 
 class KitoboDatabase:
@@ -37,14 +39,21 @@ class KitoboDatabase:
 
         filterMonitoringDeviceIds = [self.monitoringDeviceIds[i] for i in ind]
         if overwrite:
-            self.db[outCollectionName].delete({'monitoringDeviceIds': filterMonitoringDeviceIds})
+            self.db[self.outCollectionName].delete({'monitoringDeviceIds': filterMonitoringDeviceIds})
 
-        cursor = self.db[outCollectionName].find({'monitoringDeviceIds': filterMonitoringDeviceIds})
+        cursor = self.db[self.outCollectionName].find(
+            {
+                'startTime': self.startTime,
+                'endTime': self.endTime,
+                'sampleIndex': sampleIndex,
+                'monitoringDeviceIds': filterMonitoringDeviceIds
+            }
+        )
         if cursor.count() > 0:
             stats = cursor.next()
             return stats
 
-        cursor = self.db[timeInterval].aggregate([
+        cursor = self.db[self.samplingInterval].aggregate([
             {
                 '$match': {
                     'deviceId': {'$in': filterMonitoringDeviceIds},
@@ -87,7 +96,7 @@ class KitoboDatabase:
                     'userIndices': {'$literal': ind},
                     'startTime': {'$literal': self.startTime},
                     'endTime': {'$literal': self.endTime},
-                    'timeInterval': {'$literal': timeInterval},
+                    'samplingInterval': {'$literal': self.samplingInterval},
                     'sampleIndex': {'$literal': sampleIndex},
                     'loadFactor': {'$divide': ['$avg','$max']},
                     'max': True,
@@ -103,86 +112,187 @@ class KitoboDatabase:
         except StopIteration:
             raise IndexError('No power consumption data matching indexes')
 
-        self.db[outCollectionName].insert(stats)
+        self.db[self.outCollectionName].update(
+            {
+                'startTime': self.startTime,
+                'endTime': self.endTime,
+                'sampleIndex': sampleIndex,
+                'monitoringDeviceIds': filterMonitoringDeviceIds
+            },
+            {
+                '$set': {
+                    'numUsers': len(ind),
+                    'monitoringDeviceIds': filterMonitoringDeviceIds,
+                    'loadFactor': stats.loadFactor,
+                    'max': stats.max,
+                    'min': stats.min,
+                    'avg': stats.avg,
+                    'cnt': stats.cnt
+                }
+            },
+            True,
+            False
+        )
         return stats
+
+    def calculateAutocorrelation(self,ind,n,overwrite=False,sampleIndex=-1):
+        #n is the time lag for the autocorrelation
+        filterMonitoringDeviceIds = [self.monitoringDeviceIds[i] for i in ind]
+
+        #ensure that there is a stats object there. Not the most elegant; ideally both calculateAutocorrelation and calculateAggregateLoadStats (and future methods computing a statistical property) should upsert
+        #self.calculateAggregateLoadStats(ind,overwrite=False)
+        #if overwrite:
+        #    self.db[self.outCollectionName].delete({'monitoringDeviceIds': filterMonitoringDeviceIds})
+
+        cursor = self.db[self.outCollectionName].find(
+            {
+                'startTime': self.startTime,
+                'endTime': self.endTime,
+                'sampleIndex': sampleIndex,
+                'monitoringDeviceIds': filterMonitoringDeviceIds
+            }
+        )
+        if cursor.count() > 0:
+            stats = cursor.next()
+            try:
+                R = stats[('autocorrelation_{0}').format(n)]
+                return R
+            except:
+                pass
+
+        cursor = self.db[self.samplingInterval].aggregate([
+            {
+                '$match': {
+                    'deviceId': {'$in': filterMonitoringDeviceIds},
+                    'tag': 'activePwr',
+                    'time': {
+                        '$gte': self.startTime,
+                        '$lt': self.endTime
+                    }
+                }
+            },
+            {
+                '$group': {
+                    '_id': '$time',
+                    'totalPower': {'$sum': '$avg'},
+                    'cnt': {'$sum': 1}
+                }
+            },
+            {
+                '$match': {
+                    'cnt': len(ind)
+                }
+            },
+            {
+                '$sort': {'_id': 1}
+            }
+        ])
+
+        totalPower = [x['totalPower'] for x in list(cursor)]
+
+        #See http://greenteapress.com/thinkdsp/html/thinkdsp006.html section 5.2 for calculation reference
+        R = np.corrcoef(totalPower[n:],totalPower[:len(totalPower)-n])[0, 1]
+
+        results = self.db[self.outCollectionName].update(
+            {
+                'monitoringDeviceIds': filterMonitoringDeviceIds,
+                'startTime': self.startTime,
+                'endTime': self.endTime,
+                'sampleIndex': sampleIndex
+            },
+            {
+                '$set': {
+                    ('autocorrelation_{0}'.format(n)): R,
+                    'numUsers': len(ind),
+                }
+            },
+            True,
+            False
+        )
+        return R
 
     def calculateLoadFactor(self,ind):
 
         stats = self.calculateAggregateLoadStats(ind)
         loadFactor = stats.loadFactor
 
-    def calculateLoadFactorStats(self,k,sampleIndex,overwrite=False):
+    # def calculateLoadFactorStats(self,k,sampleIndex):
+    #
+    #     q = {
+    #         '_id.numUsers': k,
+    #         '_id.sampleIndex': sampleIndex
+    #     }
+    #     if overwrite:
+    #         self.db[loadFactorCollectionName].delete(q)
+    #
+    #     cursor = self.db[loadFactorCollectionName].find(q) #Stats for up to this sample index have already been found so return
+    #     if cursor.count() > 0:
+    #         return cursor.next()
+    #
+    #     cursor = self.db[self.outCollectionName].aggregate([
+    #         {
+    #             '$match': {
+    #                 'numUsers': k,
+    #                 'sampleIndex': {'$lte': sampleIndex}
+    #             }
+    #         },
+    #         {
+    #             '$group': {
+    #                 '_id': {
+    #                     'numUsers': {'$literal': k},
+    #                     'sampleIndex': {'$literal': sampleIndex},
+    #                     'samplingInterval': {'$literal': self.samplingInterval}
+    #                 },
+    #                 'avg': {'$avg': '$loadFactor'},
+    #                 #'std': {'$stdDevSamp': '$loadFactor'},
+    #                 'max': {'$max': '$loadFactor'},
+    #                 'min': {'$min': '$loadFactor'},
+    #                 'cnt': {'$sum': 1}
+    #             }
+    #         },
+    #         {
+    #             '$project': {
+    #                 'avg': True,
+    #                 'max': True,
+    #                 'min': True,
+    #                 'cnt': True,
+    #                 'numUsers': {'$literal': k},
+    #                 'sampleIndex': {'$literal': sampleIndex},
+    #                 'samplingInterval': {'$literal': self.samplingInterval},
+    #                 'startTime': self.startTime,
+    #                 'endTime': self.endTime
+    #             }
+    #         }
+    #     ])
+    #
+    #     try:
+    #         stats = cursor.next()
+    #     except StopIteration:
+    #         raise IndexError('No results in ' + self.outCollectionName + ' with k=' + k + ',sampleIndex<=' + sampleIndex + ',samplingInterval=' + self.samplingInterval)
+    #
+    #     if stats['cnt'] <= sampleIndex:
+    #         raise IndexError('sampleIndex beyond number of aggregate load profiles')
+    #     self.db[loadFactorCollectionName].insert(stats)
+    #     return stats
 
-        q = {
-            '_id.numUsers': k,
-            '_id.sampleIndex': sampleIndex
-        }
-        if overwrite:
-            self.db[loadFactorCollectionName].delete(q)
-
-        cursor = self.db[loadFactorCollectionName].find(q) #Stats for up to this sample index have already been found so return
-        if cursor.count() > 0:
-            return cursor.next()
-
-        cursor = self.db[outCollectionName].aggregate([
-            {
-                '$match': {
-                    'numUsers': k,
-                    'sampleIndex': {'$lte': sampleIndex}
-                }
-            },
-            {
-                '$group': {
-                    '_id': {
-                        'numUsers': {'$literal': k},
-                        'sampleIndex': {'$literal': sampleIndex}
-                    },
-                    'avg': {'$avg': '$loadFactor'},
-                    #'std': {'$stdDevSamp': '$loadFactor'},
-                    'max': {'$max': '$loadFactor'},
-                    'min': {'$min': '$loadFactor'},
-                    'cnt': {'$sum': 1}
-                }
-            },
-            {
-                '$project': {
-                    'avg': True,
-                    'max': True,
-                    'min': True,
-                    'cnt': True,
-                    'numUsers': {'$literal': k},
-                    'sampleIndex': {'$literal': sampleIndex}
-                }
-            }
-        ])
-
-        try:
-            stats = cursor.next()
-        except StopIteration:
-            raise IndexError('No results in ' + outCollectionName + ' with k=' + k + ',sampleIndex<=' + sampleIndex)
-
-        if stats['cnt'] <= sampleIndex:
-            raise IndexError('sampleIndex beyond number of aggregate load profiles')
-        self.db[loadFactorCollectionName].insert(stats)
-        return stats
-
-    def calculateLoadFactorStdDev(self,k,sampleIndex):
+    def calculateMetricStdDev(self,k,sampleIndex,metricName):
 
         if sampleIndex < 1:
             return 0
 
-        cursor = self.db[outCollectionName].find(
+        cursor = self.db[self.outCollectionName].find(
             {
                 'numUsers': k,
                 'sampleIndex': {'$lte': sampleIndex}
             },
             {
                 '_id': 0,
-                'loadFactor': 1
+                metricName: 1
             }
         )
-        loadFactor = [x['loadFactor'] for x in list(cursor)]
-        return stdev(loadFactor)
+
+        metric = [x[metricName] for x in list(cursor)]
+        return stdev(metric)
 
     def connect(self):
 
@@ -217,41 +327,32 @@ class KitoboDatabase:
         return cursor.next()['ind']
 
     def getSampleStats(self,k):
-        cursor = self.db[outCollectionName].find(
+        cursor = self.db[self.outCollectionName].find(
             {
                 'numUsers':k,
                 'sampleIndex': {'$ne': -1}
-            },
-            {
-                'max': True,
-                'min': True,
-                'avg': True,
-                'cnt': True,
-                'loadFactor': True
-            }
+            }#,
+            #{
+            #    'max': True,
+            #    'min': True,
+            #    'avg': True,
+            #    'cnt': True,
+            #    'loadFactor': True
+            #}
         )
         return list(cursor)
 
-    def getLoadFactorSamples(self,k):
-        cursor = self.db[outCollectionName].find(
+    def getMetricSamples(self,k,metricName):
+        cursor = self.db[self.outCollectionName].find(
             {
                 'numUsers': k,
                 'sampleIndex': {'$ne': -1}
             },
             {
-                'loadFactor': True
+                metricName: True
             }
         )
-        return [x['loadFactor'] for x in list(cursor)]
-
-    def getLoadFactorStats(self,numUsers,numSamples):
-
-        return self.db[loadFactorCollectionName].find_one({
-            '_id': {
-                'numUsers': numUsers,
-                'numSamples': numSamples
-            }
-        })
+        return [x[metricName] for x in list(cursor)]
 
     def removeSample(self,k,ind):
 
@@ -260,7 +361,24 @@ class KitoboDatabase:
             {'$pull': {'ind': ind}}
         )
 
-    def setupLoadAggregationCalculations(self):
+    def setupLoadAggregationCalculations(self,samplingInterval='fiveMinutes'):
+
+        self.samplingInterval = samplingInterval
+        self.outCollectionName = outCollectionPrefix + samplingInterval.capitalize()
+
+        #Build indexes
+        ind = [
+            ('startTime', pymongo.ASCENDING),
+            ('endTime', pymongo.ASCENDING),
+            ('numUsers',pymongo.ASCENDING),
+            ('sampleIndex', pymongo.ASCENDING),
+        ]
+        self.db[self.outCollectionName].create_index(ind,unique=True)
+        ind = [
+            ('numUsers', pymongo.ASCENDING),
+            ('sampleIndex', pymongo.ASCENDING)
+        ]
+        self.db[self.outCollectionName].create_index(ind,unique=True)
 
         # Get all the meter Ids we will be working with for this system
         cursor = self.db.powerSystem.aggregate([
@@ -296,4 +414,10 @@ class KitoboDatabase:
         sampleCounts = sorted(list(cursor), key = lambda t: t['totalSamples'])
 
         self.startTime = sampleCounts[-1]['_id']
-        self.endTime = datetime(self.startTime.year, self.startTime.month + 1, 1) if self.startTime.month < 12 else datetime(self.startTime.year + 1, 1, 1)
+
+        if self.samplingInterval == 'fiveMinutes': #we only look at one month
+            self.endTime = datetime(self.startTime.year, self.startTime.month + 1, 1) if self.startTime.month < 12 else datetime(self.startTime.year + 1, 1, 1)
+        elif self.samplingInterval == 'day':
+            self.endTime = datetime(self.startTime.year, self.startTime.month + 3, 1) if self.startTime.month < 10 else datetime(self.startTime.year + 1, self.startTime.month - 9)
+        else:
+            error(('Sampling interval {0} not supported').format(self.samplingInterval))

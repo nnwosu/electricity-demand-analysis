@@ -11,7 +11,7 @@ N = db.getNumberUsers()
 lfs = []
 totalStats = []
 for k in range(1,N):
-    lfs.append(db.getLoadFactorSamples(k))
+    lfs.append(db.getMetricSamples(k,'loadFactor'))
     totalStats.append(db.getSampleStats(k))
 db.disconnect()
 
