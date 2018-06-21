@@ -123,11 +123,11 @@ class KitoboDatabase:
                 '$set': {
                     'numUsers': len(ind),
                     'monitoringDeviceIds': filterMonitoringDeviceIds,
-                    'loadFactor': stats.loadFactor,
-                    'max': stats.max,
-                    'min': stats.min,
-                    'avg': stats.avg,
-                    'cnt': stats.cnt
+                    'loadFactor': stats['loadFactor'],
+                    'max': stats['max'],
+                    'min': stats['min'],
+                    'avg': stats['avg'],
+                    'cnt': stats['cnt']
                 }
             },
             True,
@@ -160,33 +160,7 @@ class KitoboDatabase:
             except:
                 pass
 
-        cursor = self.db[self.samplingInterval].aggregate([
-            {
-                '$match': {
-                    'deviceId': {'$in': filterMonitoringDeviceIds},
-                    'tag': 'activePwr',
-                    'time': {
-                        '$gte': self.startTime,
-                        '$lt': self.endTime
-                    }
-                }
-            },
-            {
-                '$group': {
-                    '_id': '$time',
-                    'totalPower': {'$sum': '$avg'},
-                    'cnt': {'$sum': 1}
-                }
-            },
-            {
-                '$match': {
-                    'cnt': len(ind)
-                }
-            },
-            {
-                '$sort': {'_id': 1}
-            }
-        ])
+        cursor = self.getAggregateLoadProfile(filterMonitoringDeviceIds)
 
         totalPower = [x['totalPower'] for x in list(cursor)]
 
@@ -312,6 +286,73 @@ class KitoboDatabase:
 
         self.client.close()
 
+    def getAggregateLoadProfile(self,filterMonitoringDeviceIds):
+
+        cursor = self.db[self.samplingInterval].aggregate([
+            {
+                '$match': {
+                    'deviceId': {'$in': filterMonitoringDeviceIds},
+                    'tag': 'activePwr',
+                    'time': {
+                        '$gte': self.startTime,
+                        '$lt': self.endTime
+                    }
+                }
+            },
+            {
+                '$group': {
+                    '_id': '$time',
+                    'totalPower': {'$sum': '$avg'},
+                    'cnt': {'$sum': 1}
+                }
+            },
+            {
+                '$match': {
+                    'cnt': len(filterMonitoringDeviceIds)
+                }
+            },
+            {
+                '$sort': {'_id': 1}
+            }
+        ])
+        return cursor
+
+    def getMedianLoadProfile(self,k,metricName):
+        cursor = self.db[self.outCollectionName].find(
+            {
+                'numUsers': k,
+                'sampleIndex': {'$ne': -1}
+            },
+            {
+                metricName: True,
+                'monitoringDeviceIds': True
+            }
+        ).sort(metricName,pymongo.ASCENDING)
+        cursorList = list(cursor)
+        medianInd = int(len(cursorList)/2)
+
+        cursor = self.getAggregateLoadProfile(cursorList[medianInd]['monitoringDeviceIds'])
+        c = list(cursor)
+        totalPower = [x['totalPower'] for x in c]
+        time =  [x['_id'] for x in c]
+        return time,totalPower,cursorList[medianInd][metricName]
+
+    def getMetricSamples(self,k,metricName,sort=0):
+        cursor = self.db[self.outCollectionName].find(
+            {
+                'numUsers': k,
+                'sampleIndex': {'$ne': -1}
+            },
+            {
+                metricName: True
+            }
+        )
+        if sort > 0:
+            cursor = cursor.sort({metricName: pymongo.ASCENDING})
+        elif sort < 0:
+            cursor = cursor.sort({metricName: pymongo.DESCENDING})
+        return [x[metricName] for x in list(cursor)]
+
     def getMonitoringDeviceIds(self):
         return self.monitoringDeviceIds
 
@@ -341,18 +382,6 @@ class KitoboDatabase:
             #}
         )
         return list(cursor)
-
-    def getMetricSamples(self,k,metricName):
-        cursor = self.db[self.outCollectionName].find(
-            {
-                'numUsers': k,
-                'sampleIndex': {'$ne': -1}
-            },
-            {
-                metricName: True
-            }
-        )
-        return [x[metricName] for x in list(cursor)]
 
     def removeSample(self,k,ind):
 
@@ -415,7 +444,7 @@ class KitoboDatabase:
 
         self.startTime = sampleCounts[-1]['_id']
 
-        if self.samplingInterval == 'fiveMinutes': #we only look at one month
+        if self.samplingInterval == 'fiveMinutes' or self.samplingInterval == 'minute': #we only look at one month
             self.endTime = datetime(self.startTime.year, self.startTime.month + 1, 1) if self.startTime.month < 12 else datetime(self.startTime.year + 1, 1, 1)
         elif self.samplingInterval == 'day':
             self.endTime = datetime(self.startTime.year, self.startTime.month + 3, 1) if self.startTime.month < 10 else datetime(self.startTime.year + 1, self.startTime.month - 9)
