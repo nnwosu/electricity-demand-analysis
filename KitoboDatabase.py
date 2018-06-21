@@ -5,6 +5,7 @@ import pymongo
 from pymongo.database import Database
 from pymongo import MongoClient
 from statistics import stdev
+from scipy import stats
 
 defaultSamplingInterval = 'fiveMinutes'
 outCollectionPrefix = 'aggregateLoadStats'
@@ -190,65 +191,6 @@ class KitoboDatabase:
         stats = self.calculateAggregateLoadStats(ind)
         loadFactor = stats.loadFactor
 
-    # def calculateLoadFactorStats(self,k,sampleIndex):
-    #
-    #     q = {
-    #         '_id.numUsers': k,
-    #         '_id.sampleIndex': sampleIndex
-    #     }
-    #     if overwrite:
-    #         self.db[loadFactorCollectionName].delete(q)
-    #
-    #     cursor = self.db[loadFactorCollectionName].find(q) #Stats for up to this sample index have already been found so return
-    #     if cursor.count() > 0:
-    #         return cursor.next()
-    #
-    #     cursor = self.db[self.outCollectionName].aggregate([
-    #         {
-    #             '$match': {
-    #                 'numUsers': k,
-    #                 'sampleIndex': {'$lte': sampleIndex}
-    #             }
-    #         },
-    #         {
-    #             '$group': {
-    #                 '_id': {
-    #                     'numUsers': {'$literal': k},
-    #                     'sampleIndex': {'$literal': sampleIndex},
-    #                     'samplingInterval': {'$literal': self.samplingInterval}
-    #                 },
-    #                 'avg': {'$avg': '$loadFactor'},
-    #                 #'std': {'$stdDevSamp': '$loadFactor'},
-    #                 'max': {'$max': '$loadFactor'},
-    #                 'min': {'$min': '$loadFactor'},
-    #                 'cnt': {'$sum': 1}
-    #             }
-    #         },
-    #         {
-    #             '$project': {
-    #                 'avg': True,
-    #                 'max': True,
-    #                 'min': True,
-    #                 'cnt': True,
-    #                 'numUsers': {'$literal': k},
-    #                 'sampleIndex': {'$literal': sampleIndex},
-    #                 'samplingInterval': {'$literal': self.samplingInterval},
-    #                 'startTime': self.startTime,
-    #                 'endTime': self.endTime
-    #             }
-    #         }
-    #     ])
-    #
-    #     try:
-    #         stats = cursor.next()
-    #     except StopIteration:
-    #         raise IndexError('No results in ' + self.outCollectionName + ' with k=' + k + ',sampleIndex<=' + sampleIndex + ',samplingInterval=' + self.samplingInterval)
-    #
-    #     if stats['cnt'] <= sampleIndex:
-    #         raise IndexError('sampleIndex beyond number of aggregate load profiles')
-    #     self.db[loadFactorCollectionName].insert(stats)
-    #     return stats
-
     def calculateMetricStdDev(self,k,sampleIndex,metricName):
 
         if sampleIndex < 1:
@@ -267,6 +209,50 @@ class KitoboDatabase:
 
         metric = [x[metricName] for x in list(cursor)]
         return stdev(metric)
+
+    def calculateCOV(self,ind,overwrite=False,sampleIndex=-1):
+        #n is the time lag for the autocorrelation
+        filterMonitoringDeviceIds = [self.monitoringDeviceIds[i] for i in ind]
+
+        cursor = self.db[self.outCollectionName].find(
+            {
+                'startTime': self.startTime,
+                'endTime': self.endTime,
+                'sampleIndex': sampleIndex,
+                'monitoringDeviceIds': filterMonitoringDeviceIds
+            }
+        )
+        if cursor.count() > 0:
+            s = cursor.next()
+            try:
+                return s['cov']
+            except:
+                pass
+
+        cursor = self.getAggregateLoadProfile(filterMonitoringDeviceIds)
+
+        totalPower = [x['totalPower'] for x in list(cursor)]
+
+        cov = stats.variation(totalPower)
+        print(cov)
+
+        results = self.db[self.outCollectionName].update(
+            {
+                'monitoringDeviceIds': filterMonitoringDeviceIds,
+                'startTime': self.startTime,
+                'endTime': self.endTime,
+                'sampleIndex': sampleIndex
+            },
+            {
+                '$set': {
+                    'cov': cov,
+                    'numUsers': len(ind),
+                }
+            },
+            True,
+            False
+        )
+        return cov
 
     def connect(self):
 
@@ -341,7 +327,8 @@ class KitoboDatabase:
         cursor = self.db[self.outCollectionName].find(
             {
                 'numUsers': k,
-                'sampleIndex': {'$ne': -1}
+                'sampleIndex': {'$ne': -1},
+                metricName: {'$exists': True}
             },
             {
                 metricName: True

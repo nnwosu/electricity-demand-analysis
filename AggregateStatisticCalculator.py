@@ -11,7 +11,7 @@ class AggregateStatisticCalculator:
     def __init__(self,dataSource,samplingInterval,statistic,statisticParameters=[],maxIterations=1000,tol=0.0001):
         if not (dataSource in ['kitobo']):
             raise ArgumentException('Data source not recognized')
-        if not (statistic in ['autocorrelation','variance','loadFactor']):
+        if not (statistic in ['autocorrelation','cov','loadFactor']):
             raise ArgumentException('Statistic not recognized')
         if not (samplingInterval in ['second','fiveSeconds','fifteenSeconds','minute','fiveMinutes','fifteenMinutes','hour','day','week','month','year']):
             raise ArgumentException('Sampling interval not recognized')
@@ -41,8 +41,8 @@ class AggregateStatisticCalculator:
             metricName = 'autocorrelation_'.format(self.statisticParameters[0])
         elif (self.statistic == 'loadFactor'):
             calculateStatistic = lambda ind,numIter: self.db.calculateAggregateLoadStats(ind,sampleIndex=numIter)
-        elif (self.statistic == 'variance'):
-            calculateStatistic = lambda ind,numIter: self.db.calculateVariance(ind,sampleIndex=numIter)
+        elif (self.statistic == 'cov'):
+            calculateStatistic = lambda ind,numIter: self.db.calculateCOV(ind,sampleIndex=numIter)
 
         for k in range(startK,self.N+1):
             sampleList = self.db.getSampleList(k) #Sample list saves a randomly generated list of load profiles that are sampled
@@ -83,3 +83,10 @@ class AggregateStatisticCalculator:
                 prevStdDev = newStdDev
 
                 numIter += 1
+
+    def getSamplesByNumberUsers(self):
+        samples = []
+        for k in range(1,self.N):
+            samples.append(self.db.getMetricSamples(k,self.statistic))
+
+        return samples
