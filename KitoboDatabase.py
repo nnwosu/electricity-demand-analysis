@@ -52,7 +52,8 @@ class KitoboDatabase:
         )
         if cursor.count() > 0:
             stats = cursor.next()
-            return stats
+            if 'loadFactor' in stats:
+                return stats
 
         cursor = self.db[self.samplingInterval].aggregate([
             {
