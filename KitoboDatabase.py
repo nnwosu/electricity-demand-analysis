@@ -234,7 +234,6 @@ class KitoboDatabase:
         totalPower = [x['totalPower'] for x in list(cursor)]
 
         cov = stats.variation(totalPower)
-        print(cov)
 
         results = self.db[self.outCollectionName].update(
             {
