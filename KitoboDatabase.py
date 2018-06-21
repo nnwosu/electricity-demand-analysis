@@ -199,7 +199,8 @@ class KitoboDatabase:
         cursor = self.db[self.outCollectionName].find(
             {
                 'numUsers': k,
-                'sampleIndex': {'$lte': sampleIndex}
+                'sampleIndex': {'$lte': sampleIndex},
+                metricName: {'$exists': True}
             },
             {
                 '_id': 0,
