@@ -192,7 +192,69 @@ class KitoboDatabase:
         stats = self.calculateAggregateLoadStats(ind)
         loadFactor = stats.loadFactor
 
-    def calculateMetricStdDev(self,k,sampleIndex,metricName):
+    def calculateLoadFactorPercentile(
+        self, ind, percentiles, overwrite=False, sampleIndex=-1
+    ):
+        # percentiles is array of integers between 0 and 100
+        percentiles = np.round(percentiles)
+        toReturn = percentiles.astype(float)
+        filterMonitoringDeviceIds = [self.monitoringDeviceIds[i] for i in ind]
+
+        cursor = self.db[self.outCollectionName].find(
+            {
+                'startTime': self.startTime,
+                'endTime': self.endTime,
+                'sampleIndex': sampleIndex,
+                'monitoringDeviceIds': filterMonitoringDeviceIds
+            }
+        )
+        # Check if we already have it calculated
+        notPreviouslyStored = False
+        if cursor.count() > 0:
+            s = cursor.next()
+            for i, p in enumerate(percentiles):
+                try:
+                    toReturn[i] = s['loadFactor_{}'.format(p)]
+                except:
+                    notPreviouslyStored = True
+                    break
+        else:
+            notPreviouslyStored = True
+
+        if not (notPreviouslyStored):
+            return toReturn
+
+        # Get the aggregate load profile
+        cursor = self.getAggregateLoadProfile(filterMonitoringDeviceIds)
+
+        totalPower = [x['totalPower'] for x in list(cursor)]
+        meanPower = np.mean(totalPower)
+
+        lfp = np.percentile(totalPower, percentiles)
+        setObj = {
+            'numUsers': len(ind),
+            'avg': meanPower
+        }
+        for i, p in enumerate(percentiles):
+            toReturn[i] = meanPower/lfp[i]
+            setObj['loadFactor_{}'.format(p)] = toReturn[i]
+
+        self.db[self.outCollectionName].update(
+            {
+                'monitoringDeviceIds': filterMonitoringDeviceIds,
+                'startTime': self.startTime,
+                'endTime': self.endTime,
+                'sampleIndex': sampleIndex
+            },
+            {
+                '$set': setObj
+            },
+            True,
+            False
+        )
+        return toReturn
+
+    def calculateMetricStdDev(self, k, sampleIndex, metricName):
 
         if sampleIndex < 1:
             return 0

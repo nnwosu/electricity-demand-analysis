@@ -11,9 +11,15 @@ class AggregateStatisticCalculator:
     def __init__(self,dataSource,samplingInterval,statistic,statisticParameters=[],maxIterations=1000,tol=0.0001):
         if not (dataSource in ['kitobo']):
             raise ArgumentException('Data source not recognized')
-        if not (statistic in ['autocorrelation','cov','loadFactor']):
+        if not (statistic in [
+            'autocorrelation', 'cov', 'loadFactor', 'loadFactorPercentile'
+        ]):
             raise ArgumentException('Statistic not recognized')
-        if not (samplingInterval in ['second','fiveSeconds','fifteenSeconds','minute','fiveMinutes','fifteenMinutes','hour','day','week','month','year']):
+        if not (samplingInterval in [
+            'second', 'fiveSeconds', 'fifteenSeconds', 'minute',
+            'fiveMinutes', 'fifteenMinutes', 'hour', 'day', 'week', 'month',
+            'year'
+        ]):
             raise ArgumentException('Sampling interval not recognized')
 
         self.dataSource = dataSource
@@ -38,13 +44,23 @@ class AggregateStatisticCalculator:
         metricName = self.statistic
         if (self.statistic == 'autocorrelation'):
             calculateStatistic = lambda ind,numIter: self.db.calculateAutocorrelation(ind,self.statisticParameters[0],sampleIndex=numIter)
-            metricName = 'autocorrelation_'.format(self.statisticParameters[0])
+            metricName = 'autocorrelation_{}'.format(self.statisticParameters[0])
         elif (self.statistic == 'loadFactor'):
             calculateStatistic = lambda ind,numIter: self.db.calculateAggregateLoadStats(ind,sampleIndex=numIter)
         elif (self.statistic == 'cov'):
             calculateStatistic = lambda ind,numIter: self.db.calculateCOV(ind,sampleIndex=numIter)
+        elif (self.statistic == 'loadFactorPercentile'):
+            calculateStatistic = lambda ind, numIter: (
+                self.db.calculateLoadFactorPercentile(
+                    ind, self.statisticParameters[0], sampleIndex=numIter
+                )
+            )
+            metricName = 'loadFactor_{}'.format(
+                self.statisticParameters[0][-1]  # Use the last percentile
+            )
 
         for k in range(startK,self.N+1):
+            print('k={}'.format(k))
             sampleList = self.db.getSampleList(k) #Sample list saves a randomly generated list of load profiles that are sampled
             numIter = 0
             numCombinations = floor(factorial(self.N)/factorial(k)/factorial(self.N-k))
@@ -84,9 +100,11 @@ class AggregateStatisticCalculator:
 
                 numIter += 1
 
-    def getSamplesByNumberUsers(self):
+    def getSamplesByNumberUsers(self, metricName=''):
+        if (metricName == ''):
+            metricName = self.statistic
         samples = []
         for k in range(1,self.N):
-            samples.append(self.db.getMetricSamples(k,self.statistic))
+            samples.append(self.db.getMetricSamples(k, metricName))
 
         return samples
