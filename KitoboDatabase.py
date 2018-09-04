@@ -386,22 +386,29 @@ class KitoboDatabase:
         time =  [x['_id'] for x in c]
         return time,totalPower,cursorList[medianInd][metricName]
 
-    def getMetricSamples(self,k,metricName,sort=0):
-        cursor = self.db[self.outCollectionName].find(
-            {
-                'numUsers': k,
-                'sampleIndex': {'$ne': -1},
-                metricName: {'$exists': True}
-            },
-            {
-                metricName: True
-            }
-        )
+    def getMetricSamples(self, k, metricNames, sort=0):
+        if isinstance(metricNames, str):
+            metricNames = [metricNames]
+
+        where = {
+            'numUsers': k,
+            'sampleIndex': {'$ne': -1}
+        }
+        select = {}
+
+        for mN in metricNames:
+            where[mN] = {'$exists': True}
+            select[mN] = True
+
+        cursor = self.db[self.outCollectionName].find(where, select)
         if sort > 0:
-            cursor = cursor.sort({metricName: pymongo.ASCENDING})
+            cursor = cursor.sort({metricNames[0]: pymongo.ASCENDING})
         elif sort < 0:
-            cursor = cursor.sort({metricName: pymongo.DESCENDING})
-        return [x[metricName] for x in list(cursor)]
+            cursor = cursor.sort({metricNames[0]: pymongo.DESCENDING})
+        if len(metricNames) > 1:
+            return list(cursor)
+        else:
+            return [x[metricNames[0]] for x in list(cursor)]
 
     def getMonitoringDeviceIds(self):
         return self.monitoringDeviceIds
@@ -417,19 +424,22 @@ class KitoboDatabase:
 
         return cursor.next()['ind']
 
-    def getSampleStats(self,k):
+    def getSampleStats(self, k):
         cursor = self.db[self.outCollectionName].find(
             {
-                'numUsers':k,
-                'sampleIndex': {'$ne': -1}
-            }#,
-            #{
-            #    'max': True,
-            #    'min': True,
-            #    'avg': True,
-            #    'cnt': True,
-            #    'loadFactor': True
-            #}
+                'numUsers': k,
+                'sampleIndex': {'$ne': -1},
+                'max': {'$exists': True},
+                'min': {'$exists': True},
+                'avg': {'$exists': True},
+                'cnt': {'$exists': True},
+            },
+            {
+                'max': True,
+                'min': True,
+                'avg': True,
+                'cnt': True
+            }
         )
         return list(cursor)
 

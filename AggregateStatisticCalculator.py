@@ -100,11 +100,18 @@ class AggregateStatisticCalculator:
 
                 numIter += 1
 
-    def getSamplesByNumberUsers(self, metricName=''):
-        if (metricName == ''):
-            metricName = self.statistic
+    def getSamplesByNumberUsers(self, metricNames=[]):
+        if (metricNames == []):
+            metricNames = self.statistic
         samples = []
-        for k in range(1,self.N):
-            samples.append(self.db.getMetricSamples(k, metricName))
+        for k in range(1,self.N+1):
+            samples.append(self.db.getMetricSamples(k, metricNames))
 
         return samples
+
+    def getSampleStatsBasic(self):
+        basicStats = []
+        for k in range(1, self.N+1):
+            basicStats.append(self.db.getSampleStats(k))
+
+        return basicStats
