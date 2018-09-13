@@ -1,0 +1,3 @@
+[submodule "PecanPy"]
+	path = PecanPy
+	url = https://github.com/KAPSARC/PecanPy.git
