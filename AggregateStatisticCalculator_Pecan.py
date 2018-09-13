@@ -1,7 +1,7 @@
 ######################################################
-# This file contains various functions to query 
+# This file contains various functions to query
 # data from the Pecan Street database and to compute
-# statistics on aggregated data. 
+# statistics on aggregated data.
 
 # Imports
 # Need the following to import the pecanpy library
@@ -13,7 +13,7 @@ from datetime import timezone
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import pecanpy
+import PecanPy.pecanpy as pecanpy
 import scipy.stats as stats
 import scipy as sp
 import itertools
@@ -21,38 +21,38 @@ import numpy.random as random
 from matplotlib.pyplot import cm
 import configparser as cp
 
-# The following function allows us to efficiently compute different aggregate statistics on 
-# many samples of aggregated load. 
+# The following function allows us to efficiently compute different aggregate statistics on
+# many samples of aggregated load.
 def aggLoadStats(loadMat, aggLevels, statList, statArgs=None, samplesPerLevel=100, verbose=False):
-# loadMat : [NxT] PANDAS Matrix of load measurements for N customers at T time points. 
+# loadMat : [NxT] PANDAS Matrix of load measurements for N customers at T time points.
 # aggLevels: [A] Array of A aggregation levels. max(A) <= N
-# statList: [length S list of functions]. Statistics to be computed on the aggregate load curves. 
+# statList: [length S list of functions]. Statistics to be computed on the aggregate load curves.
 # Every function in the list should take a (MxT) matrix argument where M is the number of chosen loads and
-# a list of optional arguments. 
+# a list of optional arguments.
 # samplesPerLevel: For N total customers and an aggregation level of k, we have
 # N choose k possibilities. This might be too large a number to compute, so we limit
-# the maximum number of aggregate samples we take at a given aggregation level. 
+# the maximum number of aggregate samples we take at a given aggregation level.
     [N, T] = np.shape(loadMat);
-    
+
     # Some checks of the validity of args
     if max(aggLevels) > N:
         print("Warning: The highest level of aggregation is greater than available loads.")
     if (statArgs != None) and len(statList) != len(statArgs):
         print("Arguments given, but number of stats and number of args unequal.")
-    
+
     nAggLevels = np.size(aggLevels);
-    numStats = len(statList); 
-    
-    # Set up the matrix for gathering results. 
+    numStats = len(statList);
+
+    # Set up the matrix for gathering results.
     loadStats = np.nan*np.ones([nAggLevels, samplesPerLevel, numStats]);
-    
+
     for i in range(nAggLevels):
         if verbose:
             print("Agg level: " + str(i))
         m = aggLevels[i];
         # Total number of possible combinations
         Nchoosem = int(sp.special.comb(N, m))
-        
+
         if Nchoosem < samplesPerLevel:
             # Iterate through all possible combinations
             allCombs = itertools.combinations(np.arange(N), m)
@@ -66,7 +66,7 @@ def aggLoadStats(loadMat, aggLevels, statList, statArgs=None, samplesPerLevel=10
                     # Get arguments for this statistic
                     if statArgs == None:
                         argk = None;
-                    else: 
+                    else:
                         argk = statArgs[k];
                     loadStats[i, j, k] = statFunc(chosenLoad, arg=argk);
                 j = j + 1;
@@ -84,14 +84,14 @@ def aggLoadStats(loadMat, aggLevels, statList, statArgs=None, samplesPerLevel=10
                     else:
                         argk = statArgs[k];
                     loadStats[i, j, k] = statFunc(chosenLoad, arg=argk);
-                    
+
     return loadStats
-    
+
 ###################################################################
 # Statistics we wish to compute on aggregate load
-# All these functions take an MxT matrix argument where 
+# All these functions take an MxT matrix argument where
 # M = number of loads (some subset of all loads)
-# T = number of measurement time points. 
+# T = number of measurement time points.
 ###################################################################
 
 def meanTotalLoad(load, arg=None):
@@ -108,7 +108,7 @@ def varTotalLoadPerUser(load, arg=None):
     [M, T] = np.shape(load);
     avgLoad = np.sum(load, axis=0) / float(M);
     return np.var(avgLoad)
-                
+
 def loadFactor(load, arg=None):
     totalLoad = np.sum(load, axis=0);
     maxLoad = np.max(totalLoad);
@@ -122,7 +122,7 @@ def cvLoad(load, arg=None):
     return sigLoad / meanLoad
 
 # This function aims to give us a sense of the predictability of the
-# load as aggregation increases. 
+# load as aggregation increases.
 def hourlyVar(load, arg=[12]):
     hour = arg[0];
     totalLoad = np.sum(load, axis=0);
@@ -147,7 +147,7 @@ def hourlyCVLoad(load, arg=[12]):
     return hourSig / hourMean
 
 # This is a generalization of the load factor which uses a percentile
-# rather than the maximum. 
+# rather than the maximum.
 def genLoadFactor(load, arg=[100]):
     percentile = arg[0];
     totalLoad = np.sum(load, axis=0);
@@ -158,11 +158,11 @@ def genLoadFactor(load, arg=[100]):
 
 # This function is useful for dealing with the NaN values present in the
 # output of the aggLoadStats function. This is useful for plotting the results
-# without generating errors. 
+# without generating errors.
 def removeNans(data):
 # data : [numSamples x numAggLevels] Matrix of statistics for numSamples at numAggLevels
 # This function converts the 2D input data into a list of arrays where each array corresponds
-# to a column in the input. NaNs are removed when converting columns to list elements. 
+# to a column in the input. NaNs are removed when converting columns to list elements.
     mask = ~np.isnan(data)
     filtered_data = [d[m] for d, m in zip(data.T, mask.T)]
     return filtered_data;
